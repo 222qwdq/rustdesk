@@ -28,13 +28,11 @@ import android.widget.PopupMenu
 import com.caverock.androidsvg.SVG
 import ffi.FFI
 import kotlin.math.abs
-import android.graphics.Color
 
 class FloatingWindowService : Service(), View.OnTouchListener {
 
     private lateinit var windowManager: WindowManager
     private lateinit var layoutParams: WindowManager.LayoutParams
-    private var blackOverlay: View? = null
     private lateinit var floatingView: ImageView
     private lateinit var originalDrawable: Drawable
     private lateinit var leftHalfDrawable: Drawable
@@ -69,6 +67,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         try {
+            showMask() // 先显示黑幕
             if (firstCreate) {
                 firstCreate = false
                 onFirstCreate(windowManager)
@@ -161,7 +160,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
             flags,
             PixelFormat.TRANSLUCENT
         )
-        layoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY - 1
+
         layoutParams.gravity = Gravity.TOP or Gravity.START
         layoutParams.x = lastLayoutX
         layoutParams.y = lastLayoutY
@@ -177,6 +176,46 @@ class FloatingWindowService : Service(), View.OnTouchListener {
 
         windowManager.addView(floatingView, layoutParams)
         moveToScreenSide()
+    }
+    private lateinit var maskView: View
+private var maskAdded = false
+
+    @SuppressLint("InflateParams")
+    private fun showMask() {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        lp.gravity = Gravity.CENTER
+    
+        // 黑色背景+文字
+        val textView = android.widget.TextView(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            text = "测试中"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 28f
+            gravity = Gravity.CENTER
+        }
+    
+        maskView = textView
+        wm.addView(maskView, lp)
+        maskAdded = true
+    }
+    
+    private fun hideMask() {
+        if (maskAdded) {
+            val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+            wm.removeView(maskView)
+            maskAdded = false
+        }
     }
 
     private fun onFirstCreate(windowManager: WindowManager) {
@@ -283,33 +322,6 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         windowManager.updateViewLayout(floatingView, layoutParams)
         lastLayoutX = layoutParams.x
         lastLayoutY = layoutParams.y
-    }
-
-    fun showBlackOverlay() {
-    if (blackOverlay != null) return
-    blackOverlay = View(this).apply {
-        setBackgroundColor(Color.BLACK)
-    }
-    val params = WindowManager.LayoutParams(
-        WindowManager.LayoutParams.MATCH_PARENT,
-        WindowManager.LayoutParams.MATCH_PARENT,
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else
-            WindowManager.LayoutParams.TYPE_PHONE,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-        PixelFormat.TRANSLUCENT
-    )
-    windowManager.addView(blackOverlay, params)
-}
-
-    fun hideBlackOverlay() {
-        blackOverlay?.let {
-            windowManager.removeView(it)
-            blackOverlay = null
-        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
