@@ -3,32 +3,29 @@ name: Build RustDesk Android APK
 on:
   workflow_dispatch:
     inputs:
-      arch:
-        description: 'Target architecture'
-        required: true
-        default: 'aarch64'
-      target:
-        description: 'Target triple'
-        required: true
-        default: 'aarch64-linux-android'
+      upload-artifact:
+        description: 'Whether to upload the APK'
+        required: false
+        default: 'true'
 
 env:
+  RUST_VERSION: "1.79.0"
   ANDROID_FLUTTER_VERSION: "3.24.5"
   NDK_VERSION: "25.2.9519653"
-  RUST_VERSION: "1.71.0"
-  CARGO_NDK_VERSION: "2.2.1"
-  VCPKG_COMMIT_ID: "your_vcpkg_commit_id_here" # 改成原版对应 commit
+  CARGO_NDK_VERSION: "2.1.0"
+  VCPKG_COMMIT_ID: "5bb4fbcf50bf1382b2c56b912da3f80a7a62f42a"
 
 jobs:
   build-rustdesk-android:
     name: Build RustDesk Android APK
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         job:
-          - { arch: aarch64, target: aarch64-linux-android }
-          - { arch: armv7, target: armv7-linux-androideabi }
-          - { arch: x86_64, target: x86_64-linux-android }
+          - { arch: aarch64, target: aarch64-linux-android, suffix: "" }
+          - { arch: armv7, target: armv7-linux-androideabi, suffix: "" }
+          - { arch: x86_64, target: x86_64-linux-android, suffix: "" }
 
     steps:
       - name: Free Disk Space
@@ -39,31 +36,39 @@ jobs:
           haskell: true
           docker-images: true
 
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake curl gcc-multilib git g++ g++-multilib \
+            libayatana-appindicator3-dev libasound2-dev libc6-dev libclang-dev libunwind-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-3-dev libpam0g-dev \
+            libpulse-dev libva-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxdo-dev libxfixes-dev llvm-dev nasm ninja-build openjdk-17-jdk-headless \
+            pkg-config tree wget
+
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake curl gcc-multilib g++ g++-multilib \
-               libayatana-appindicator3-dev libasound2-dev libc6-dev libclang-dev \
-               libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-               libgtk-3-dev libpam0g-dev libpulse-dev libva-dev libxcb-randr0-dev \
-               libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libxfixes-dev llvm-dev \
-               nasm ninja-build openjdk-17-jdk-headless pkg-config tree wget
-
-      - name: Install Flutter
+      - name: Install flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
 
-      - name: Patch Flutter
+      - name: Patch flutter
         run: |
           cd $(dirname $(dirname $(which flutter)))
-          [[ "3.24.5" == ${{ env.ANDROID_FLUTTER_VERSION }} ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          [[ "3.24.5" == ${{ env.ANDROID_FLUTTER_VERSION }} ]] && \
+            git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
 
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -84,14 +89,21 @@ jobs:
             aarch64-linux-android) ANDROID_TARGET=arm64-v8a ;;
             armv7-linux-androideabi) ANDROID_TARGET=armeabi-v7a ;;
             x86_64-linux-android) ANDROID_TARGET=x86_64 ;;
+            i686-linux-android) ANDROID_TARGET=x86 ;;
           esac
           ./flutter/build_android_deps.sh "${ANDROID_TARGET}"
+        shell: bash
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rustdesk-lib-cache-android
+          key: ${{ matrix.job.target }}
 
       - name: Build rustdesk lib
         env:
@@ -104,22 +116,34 @@ jobs:
             aarch64-linux-android)
               ./flutter/ndk_arm64.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
-            ;;
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so ;;
             armv7-linux-androideabi)
               ./flutter/ndk_arm.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
-            ;;
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so ;;
             x86_64-linux-android)
               ./flutter/ndk_x64.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/x86_64
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so
-            ;;
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so ;;
+            i686-linux-android)
+              ./flutter/ndk_x86.sh
+              mkdir -p ./flutter/android/app/src/main/jniLibs/x86
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/x86/librustdesk.so ;;
           esac
 
-      - name: Build Android APK
+      - name: Build APK
         run: |
-          cd flutter/android
-          ./gradlew assembleRelease
-          ls -lh app/build/outputs/apk/release/
+          pushd flutter
+          flutter build apk --release
+          popd
+
+      - name: Upload APK
+        if: ${{ inputs.upload-artifact == 'true' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: rustdesk-${{ matrix.job.arch }}.apk
+          path: flutter/build/app/outputs/flutter-apk/app-release.apk
