@@ -4,37 +4,33 @@ on:
   workflow_dispatch:
     inputs:
       upload-artifact:
-        description: 'Whether to upload the APK'
-        required: false
+        description: 'Upload APK artifact'
+        required: true
         default: 'true'
-
-env:
-  RUST_VERSION: "1.79.0"
-  ANDROID_FLUTTER_VERSION: "3.24.5"
-  NDK_VERSION: "25.2.9519653"
-  CARGO_NDK_VERSION: "2.1.0"
-  VCPKG_COMMIT_ID: "5bb4fbcf50bf1382b2c56b912da3f80a7a62f42a"
 
 jobs:
   build-rustdesk-android:
-    name: Build RustDesk Android APK
-    runs-on: ubuntu-24.04
+    name: Build RustDesk Android APK ${{ matrix.job.arch }}
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { arch: aarch64, target: aarch64-linux-android, suffix: "" }
-          - { arch: armv7, target: armv7-linux-androideabi, suffix: "" }
-          - { arch: x86_64, target: x86_64-linux-android, suffix: "" }
+          - { arch: aarch64, target: aarch64-linux-android, os: ubuntu-24.04, suffix: "" }
+          - { arch: armv7, target: armv7-linux-androideabi, os: ubuntu-24.04, suffix: "" }
+          - { arch: x86_64, target: x86_64-linux-android, os: ubuntu-24.04, suffix: "" }
 
     steps:
-      - name: Free Disk Space
+      - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
         with:
+          tool-cache: false
           android: false
           dotnet: true
           haskell: true
+          large-packages: false
           docker-images: true
+          swap-storage: false
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v6
@@ -58,17 +54,16 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install flutter
+      - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
 
-      - name: Patch flutter
+      - name: Patch Flutter
         run: |
           cd $(dirname $(dirname $(which flutter)))
-          [[ "3.24.5" == ${{ env.ANDROID_FLUTTER_VERSION }} ]] && \
-            git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          [[ "3.24.5" == ${{env.ANDROID_FLUTTER_VERSION}} ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
 
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -76,7 +71,7 @@ jobs:
           ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
 
-      - name: Setup vcpkg
+      - name: Setup vcpkg with Github Actions binary cache
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: /opt/artifacts/vcpkg
@@ -92,20 +87,25 @@ jobs:
             i686-linux-android) ANDROID_TARGET=x86 ;;
           esac
           ./flutter/build_android_deps.sh "${ANDROID_TARGET}"
-        shell: bash
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          components: rustfmt
+          components: "rustfmt"
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: rustdesk-lib-cache-android
           key: ${{ matrix.job.target }}
 
-      - name: Build rustdesk lib
+      - name: Build RustDesk lib
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -116,24 +116,25 @@ jobs:
             aarch64-linux-android)
               ./flutter/ndk_arm64.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so ;;
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
+            ;;
             armv7-linux-androideabi)
               ./flutter/ndk_arm.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so ;;
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
+            ;;
             x86_64-linux-android)
               ./flutter/ndk_x64.sh
               mkdir -p ./flutter/android/app/src/main/jniLibs/x86_64
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so ;;
-            i686-linux-android)
-              ./flutter/ndk_x86.sh
-              mkdir -p ./flutter/android/app/src/main/jniLibs/x86
-              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
-                 ./flutter/android/app/src/main/jniLibs/x86/librustdesk.so ;;
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/x86_64/librustdesk.so
+            ;;
           esac
+
+      - name: Upload RustDesk library to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: librustdesk.so.${{ matrix.job.target }}
+          path: ./target/${{ matrix.job.target }}/release/liblibrustdesk.so
 
       - name: Build APK
         run: |
@@ -143,7 +144,7 @@ jobs:
 
       - name: Upload APK
         if: ${{ inputs.upload-artifact == 'true' }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rustdesk-${{ matrix.job.arch }}.apk
           path: flutter/build/app/outputs/flutter-apk/app-release.apk
