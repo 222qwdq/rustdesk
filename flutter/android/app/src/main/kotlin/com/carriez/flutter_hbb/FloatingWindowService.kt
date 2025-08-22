@@ -33,6 +33,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
 
     private lateinit var windowManager: WindowManager
     private lateinit var layoutParams: WindowManager.LayoutParams
+    private var blackOverlay: View? = null
     private lateinit var floatingView: ImageView
     private lateinit var originalDrawable: Drawable
     private lateinit var leftHalfDrawable: Drawable
@@ -159,7 +160,7 @@ class FloatingWindowService : Service(), View.OnTouchListener {
             flags,
             PixelFormat.TRANSLUCENT
         )
-
+        layoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY - 1
         layoutParams.gravity = Gravity.TOP or Gravity.START
         layoutParams.x = lastLayoutX
         layoutParams.y = lastLayoutY
@@ -283,6 +284,33 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         lastLayoutY = layoutParams.y
     }
 
+    fun showBlackOverlay() {
+    if (blackOverlay != null) return
+    blackOverlay = View(this).apply {
+        setBackgroundColor(Color.BLACK)
+    }
+    val params = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else
+            WindowManager.LayoutParams.TYPE_PHONE,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+        PixelFormat.TRANSLUCENT
+    )
+    windowManager.addView(blackOverlay, params)
+}
+
+    fun hideBlackOverlay() {
+        blackOverlay?.let {
+            windowManager.removeView(it)
+            blackOverlay = null
+        }
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (newConfig.orientation != lastOrientation) {
@@ -389,4 +417,3 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         return false
     }
 }
-
